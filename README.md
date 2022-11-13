@@ -1,67 +1,67 @@
-# �T�v
-���̃��|�W�g���͈Í����Y���̎�����̋@�\�̂����A��菈���̃T���v�������ł���B
-�����̐��m����ۂ������ɏ������s�����Ƃ�ړI�Ƃ��A�ȉ��̐݌v���̗p���Ă���B
-* Web �u���E�U��X�}�[�g�t�H���l�C�e�B�u�A�v���Ȃǂ� Frontend ����󂯕t�����������A��菈�����Č��ʂ�Ԃ��܂ł̍s�����ו������A�X�P�[���A�E�g���\�ɂ���
-* ��菈�������V�K�̒������󂯂���悤�A������ Producer-Consumer �p�^�[���ŏ�������
-* ���͎Q�ƂƍX�V�̗������r�I�����Ɏ��s���邽�߁A���t�񕪒T���؂�p���ă�������ɕێ�����
-* ��菈���͒������󂯕t�������Ԃɏ�������K�v�����邽�߁A�V���O���X���b�h�ŉғ�����
+# 概要
+このリポジトリは暗号資産等の取引所の機能のうち、約定処理のサンプル実装である。
+処理の正確性を保ちつつ高速に処理を行うことを目的とし、以下の設計を採用している。
+* Web ブラウザやスマートフォンネイティブアプリなどの Frontend から受け付けた注文を、約定処理して結果を返すまでの行程を細分化し、スケールアウトを可能にする
+* 約定処理中も新規の注文を受けられるよう、注文を Producer-Consumer パターンで処理する
+* 板情報は参照と更新の両方を比較的高速に実行するため、平衡二分探索木を用いてメモリ上に保持する
+* 約定処理は注文を受け付けた順番に処理する必要があるため、シングルスレッドで稼働する
 
 
-# �r���h��
+# ビルド環境
 C#  
 .NET 6.0  
 Visual Studio 2022  
 
 
-# �v��
-�ȉ��̒����������\�Ƃ���B
-* ���s�̔��蒍���E��������
-* �w�l�̔��蒍���E��������
-* IFD, OCO, IFDOCO ����
-* GTC, IOC, FOK ���s���ʏ���
-* �g���K�[����
+# 要件
+以下の注文を処理可能とする。
+* 成行の売り注文・買い注文
+* 指値の売り注文・買い注文
+* IFD, OCO, IFDOCO 注文
+* GTC, IOC, FOK 執行数量条件
+* トリガー条件
 
-�������{�����ł͂����v���̈ꕔ�̂ݏ������������Ă���B�ڍׂ͌�q�� **�����_�ł̎���** ���Q�ƁB
+ただし本実装ではこれら要件の一部のみ処理を実装している。詳細は後述の **現時点での実装** を参照。
 
-# �A�[�L�e�N�`����{�݌v
-�V�X�e�����\������R���|�[�l���g����т��̊Ԃ̒ʐM�v���g�R���ƃC���^�[�t�F�[�X���L�q����B
+# アーキテクチャ基本設計
+システムを構成するコンポーネントおよびその間の通信プロトコルとインターフェースを記述する。
 
     (Frontend)
-    �@�� protocol:http��, interface:JSON
-    �ڋq������t
-    �@�� protocol:gRPC, interface:serialized object(�o�C�g�z��)
-    ������t
-    �@�� protocol:gRPC or TCP or �v���Z�X�ԒʐM, interface:�Œ蒷�o�C�g�z��
-    ���
-    �@�� protocol:gRPC or TCP or �v���Z�X�ԒʐM, interface:�Œ蒷�o�C�g�z��
-    ���㏈��
-    �@�� protocol:gRPC, interface:serialized object(�o�C�g�z��)
-    ����
-    �@�� protocol:http��, interface:JSON
+    　↓ protocol:http等, interface:JSON
+    顧客注文受付
+    　↓ protocol:gRPC, interface:serialized object(バイト配列)
+    注文受付
+    　↓ protocol:gRPC or TCP or プロセス間通信, interface:固定長バイト配列
+    約定
+    　↓ protocol:gRPC or TCP or プロセス間通信, interface:固定長バイト配列
+    約定後処理
+    　↓ protocol:gRPC, interface:serialized object(バイト配列)
+    締結
+    　↓ protocol:http等, interface:JSON
     (Frontend)
 
-�ڋq������t�`�����܂ł��T�[�o�[���̃R���|�[�l���g�ł���B
-Frontend ���� JSON �`���̒����f�[�^�� http ���Ōڋq������t�R���|�[�l���g���󂯎��A
-�������� serialized object ���\�z���� gRPC ���Œ�����t�R���|�[�l���g�ɓn���c�Ƃ������Ƃ������Ă���B
-���̂悤�ɃR���|�[�l���g�����������R�́A��q�� **�ڋq�����̕���** �ɋL�q�����B
-JSON��Œ蒷�o�C�g�z��Ȃǂ̋�̓I�ȃ��b�Z�[�W�t�H�[�}�b�g�͌�q�� **�R���|�[�l���g�ڍ�** �ɋL�q�����B
+顧客注文受付～締結までがサーバー側のコンポーネントである。
+Frontend から JSON 形式の注文データを http 等で顧客注文受付コンポーネントが受け取り、
+そこから serialized object を構築して gRPC 等で注文受付コンポーネントに渡す…ということを示している。
+このようにコンポーネント分割した理由は、後述の **顧客注文の分析** に記述した。
+JSONや固定長バイト配列などの具体的なメッセージフォーマットは後述の **コンポーネント詳細** に記述した。
 
 
-# �R���|�[�l���g�ڍ�
-## �ڋq������t�R���|�[�l���g(Customer order reception)
-������ Web Application Server ��ɍ\�z����B
-��ȐӖ��́A�ڋq�̔F�؁A�ڋq���� JSON �� Validation ����їL���m�F(���Ƃ��Ό����c���ȓ��̒������Ȃ�)�A�����̉i�����ł���B
+# コンポーネント詳細
+## 顧客注文受付コンポーネント(Customer order reception)
+いわゆる Web Application Server 上に構築する。
+主な責務は、顧客の認証、顧客注文 JSON の Validation および有効確認(たとえば口座残高以内の注文かなど)、それらの永続化である。
 
-�������e���L���ł���΁A�ڋq����������R���|�[�l���g�ŏ������ׂ������𐶐����A������t�R���|�[�l���g�ɑ΂��Ĕ��s����B
-�������e���i����������AFrontend �ɒ������󗝂����|��Ԃ��B
-���̏����͕����̌ڋq������t�R���|�[�l���g�ɏ����𕪎U�ł��邽�߁A���̃R���|�[�l���g�̓X�P�[���A�E�g���\�ł���B
+注文内容が有効であれば、顧客注文から約定コンポーネントで処理すべき注文を生成し、注文受付コンポーネントに対して発行する。
+注文内容を永続化した後、Frontend に注文を受理した旨を返す。
+この処理は複数の顧客注文受付コンポーネントに処理を分散できるため、このコンポーネントはスケールアウトが可能である。
 
 
-### �ڋq���� JSON �t�H�[�}�b�g
+### 顧客注文 JSON フォーマット
 
 ```
-(������₷���̂��� Typescript ���ɋL�q)
-// �ڋq����
+(分かりやすさのため Typescript 風に記述)
+// 顧客注文
 CustomerOrder
 {
     customer_id: int
@@ -69,24 +69,24 @@ CustomerOrder
   , ifd ?: [Order, Order]
   , oco ?: [Order, Order]
   , ifdoco ?: [Order, Order, Order]
-  // single �` ifdoco �̂����ꂩ����w�肷��z��Bcustomer_id ���s�v�̉\����������������₷���̂��ߒ�`
-  // ���Ƃ��� ifd �����̏ꍇ�A�ŏ��̒��������̒����Ƃ����悤�ɓ���w�肷��
+  // single ～ ifdoco のいずれか一つを指定する想定。customer_id も不要の可能性が高いが分かりやすさのため定義
+  // たとえば ifd 注文の場合、最初の注文→次の注文というように二つを指定する
 }
 
-// CustomerOrder �Ɋ܂܂��ŏ��P�ʂ̒���
+// CustomerOrder に含まれる最小単位の注文
 Order
 {
-  // ���蔃���̎���
+  // 売り買いの識別
     buy_or_sell: "buy" | "sell" 
-  // ���i�B-1 �͐��s
+  // 価格。-1 は成行
   , limit_price: int | -1  
-  // ����
+  // 数量
   , amount: float
-  // �����̒ʍs�����B64bit unix time�B-1 �͖�����
+  // 注文の通行期限。64bit unix time。-1 は無期限
   , expiration: long | -1
-  // ���s���ʏ���
+  // 執行数量条件
   , amount_condition: "gtc" | "ioc" | "fok"
-  // ���s����(�g���K�[����)�Boptional
+  // 執行条件(トリガー条件)。optional
   , trigger ?: 
     {
         price : long
@@ -94,156 +94,158 @@ Order
     }
 }
 
-// �L�����Z������ۂ̌ڋq����
+// キャンセルする際の顧客注文
 CustomerCancelOrder
 {
     customer_id: int
-  // CustomerOrder ���󗝂����ƁA64 bit �� id ���Ԃ����z��B���� id ���w�肵�ăL�����Z������
+  // CustomerOrder が受理されると、64 bit の id が返される想定。その id を指定してキャンセルする
   , order_id : long
 }
 ```
-�� �g���[�����O�E�X�g�b�v�����͖��Ή�
+※ トレーリング・ストップ注文は未対応
 
-�݌v����:
-���[�U�[�C���^�[�t�F�[�X��ڋq�񋟋@�\�͕ω��������܂�邽�߁A������x�ǐ���C���e�Ր��������t�H�[�}�b�g�ł���̂��]�܂����B
-�ڋq������t�R���|�[�l���g��DB�A�N�Z�X�ȂǍs���ׂ������̕��ׂ͑傫�����A�������e�͓Ɨ����Ă��邽�߃X�P�[���A�E�g�\�ł���B
+設計根拠:
+ユーザーインターフェースや顧客提供機能は変化が見込まれるため、ある程度可読性や修正容易性が高いフォーマットであるのが望ましい。
+顧客注文受付コンポーネントはDBアクセスなど行うべき処理の負荷は大きいが、処理内容は独立しているためスケールアウト可能である。
 
 
-## ������t�R���|�[�l���g(Order reception)
-�Ӗ��͖��R���|�[�l���g�ŏ������ׂ������̎�t�ł���B
+## 注文受付コンポーネント(Order reception)
+責務は約定コンポーネントで処理すべき注文の受付である。
 
-Producer-Consumer �p�^�[���� Producer �ɊY������B
-�ڋq����̒����̏��Ԃ�ۏ؂��邽�߁A1�v���Z�X�ł���K�v������B
-�����̌ڋq������t�R���|�[�l���g���璍�����󂯕t���邽�ߔr�����䂪�K�v�����A�����̎�t�͒������\�����鐔�\�o�C�g�̃��������R�s�[���邾���ł��邽�߁A�N���e�B�J���Z�N�V�����͈̔͂͋����B
-�󂯕t���������̓L���[�ɕێ����A���R���|�[�l���g����̗v���ɉ����ď��Ԃɒ񋟂���B
-�������L���[�ɂ������A���R���|�[�l���g�̓u���b�L���O���ꂸ�����𑱂��邱�Ƃ��ł���B
+Producer-Consumer パターンの Producer に該当する。
+顧客からの注文の順番を保証するため、1プロセスである必要がある。
+複数の顧客注文受付コンポーネントから注文を受け付けるため排他制御が必要だが、注文の受付は注文を構成する数十バイトのメモリをコピーするだけであるため、クリティカルセクションの範囲は狭い。
+受け付けた注文はキューに保持し、約定コンポーネントからの要求に応じて順番に提供する。
+注文がキューにある限り、約定コンポーネントはブロッキングされず処理を続けることができる。
 
-### �����f�[�^�\��
-�ȉ���30�o�C�g�̌Œ蒷�o�C�g�z�񃁃b�Z�[�W�ł���B
-(���������A���C�����g��������x�l���������APadding�܂߂đ��߂Ɏ�����������������Ȃ�)
+### 注文データ構造
+以下の30バイトの固定長バイト配列メッセージである。
+(※メモリアライメントをある程度考慮したが、Paddingを含めて取る方が高速かもしれない)
 
-     �����̃t�H�[�}�b�g(�o�C�g�� �t�B�[���h�� ����):
-     8 id customer_id + customer_order_sequence �ł���A��ӂɂȂ�ID
-       4 customer_id �ڋq��ID
-       4 customer_order_sequence �ڋq���Ƃ̔����̘A�ԁB1����̏���
-     8 time �������󂯕t��������
-     8 amount ��������Í����Y�̗ʁB0�ȏ�̒l
-     4 price ���l�܂��͔��l(yen)�B0�ȏ�̒l
-     1 type �����^�C�v
-     1 execution_process_type ��菈���p�^�C�v
+     注文のフォーマット(バイト数 フィールド名 説明):
+     8 id customer_id + customer_order_sequence であり、一意になるID
+       4 customer_id 顧客のID
+       4 customer_order_sequence 顧客ごとの板注文の連番。1からの昇順
+     8 time 注文を受け付けた時刻
+     8 amount 注文する暗号資産の量。0以上の値
+     4 price 買値または売値(yen)。0以上の値
+     1 type 注文タイプ
+     1 execution_process_type 約定処理用タイプ
 
-     ���ڐ���:
+     項目説明:
      customer_order_sequence:
-     ���� 1 ����̒����������Ă� overflow �ɂ� 1000�N�ȏォ����B
-     ����ȏ�� sequence ���K�v�ȏꍇ�́Acustomer_id �� 32 bit���K�v�ł͂Ȃ��\�����������߁A���̕��� bit �𗘗p���ł���B
-     (id �Ƃ��� 64bit �������g����΂悢)
+     毎日 1 万回の注文があっても overflow には 1000年以上かかる。
+     それ以上の sequence が必要な場合は、customer_id が 32 bitも必要ではない可能性が高いため、その分の bit を利用もできる。
+     (id として 64bit 整数が使えればよい)
      
      amount:
-     �P�ʂ� 10^-8 �Ƃ���Œ菬���_���ŕ\������B���Ȃ킿 amount �� 1 �̏ꍇ�̒����̗ʂ� 0.00000001 �ł���B
-     0.00000001 BTC -> 1���� 1BTC 10^-08
-     32bit �ł� 42 btc �܂ł̎�����������Ȃ��B2100���܂ň����ɂ� 51 bit �K�v�ł���B
+     単位を 10^-8 とする固定小数点数で表現する。すなわち amount が 1 の場合の注文の量は 0.00000001 である。
+     0.00000001 BTC -> 1億で 1BTC 10^-08
+     32bit では 42 btc までの取引しか扱えない。2100万まで扱うには 51 bit 必要である。
      
      price:
-     ���������͕��̒l�A���蒍���� 0 �܂��͐��̒l�Ƃ���B
-     ����͏����Ń\�[�g�����ۂɂ��ꂼ��ł��������������A�ł��������蒍�����擪�ɗ���悤�ɂ��邽�߁B
+     買い注文は負の値、売り注文は 0 または正の値とする。
+     これは昇順でソートした際にそれぞれ最も高い買い注文、最も安い売り注文が先頭に来るようにするため。
       
      type:
-     1: GTC ���� (FAS����)
-     2: IOC ���� (FAK����)
-     3: FOK ����
+     1: GTC 注文 (FAS注文)
+     2: IOC 注文 (FAK注文)
+     3: FOK 注文
       
      execution_process_type:
-     Executer �ɑ΂��鏈���̃^�C�v�B
-     255: Executer ���̂��I������
-     0: �����̃L�����Z�� (�w�肳�ꂽ id �̒������L�����Z������)
-     1: �P�Ƃ̒���
-     2: OCO ����
+     Executer に対する処理のタイプ。
+     255: Executer 自体を終了する
+     0: 注文のキャンセル (指定された id の注文をキャンセルする)
+     1: 単独の注文
+     2: OCO 注文
 
 
-## ���R���|�[�l���g(Executer)
-�Ӗ��͔���Ɣ������\�z���A��菈�����s�����Ƃł���B
+## 約定コンポーネント(Executer)
+責務は売り板と買い板を構築し、約定処理を行うことである。
 
-�����ɂ����Ă�Producer-Consumer �p�^�[���� Consumer �ɊY�����A��茋�ʂɂ����Ă�Producer-Consumer �p�^�[���� Producer �ɊY������B
-���Ԃ�ۏ؂��邽�߁A1�v���Z�X�ł���K�v������B
-
-
-### ���̃I�u�W�F�N�g���f��
-��̕��t�񕪒T���؂Ŕ�����Ɣ������̂��ꂼ���ێ�����B
-���t�񕪒T���؂� key �͉��i�ł���B
-(�����f�[�^�\���ɋL�q�����悤��)���艿�i�͐��̐��A�������i�͕��̐��Ƃ��Akey �̏����ŏ����t�����邱�ƂŁA����̕��t�񕪒T���؂ł͐擪�v�f���ň��l�̔��蒍���A�����ł͐擪�v�f���ō��l�̔��������ƂȂ�B
-(�������g�p���镽�t�񕪒T���؃��C�u�����ɂ���ẮA�����Ƃ����̒l�ŕێ����Ă��������͍~���A����͏����Ƃ��Ă����͂Ȃ�)
-
-���t�񕪒T���؂� value �Ɋi�[����͔̂��i(BoardPrice)�I�u�W�F�N�g�ł���B
-���i�I�u�W�F�N�g�́A���̉��i�̒��������n��� LinkedList �ŕ\����������(Order)�I�u�W�F�N�g�ւ̎Q�Ƃ����B
-
-�܂������̃L�����Z���̍ۂɑΉ�����I�u�W�F�N�g�������I�ɒT�����߁A key �� OrderId�Avalue �� �����I�u�W�F�N�g�Ƃ���S���� Dictionary ��ێ����Ă���B
-�L�����Z�����钍�������폜��Ɏc��̒����̏�����ۂ��߁A�����I�u�W�F�N�g�͑o�������X�g�Ƃ���(�����i�Ŏ��n��I�Ɉ�O�̒����I�u�W�F�N�g����ш��̒����I�u�W�F�N�g�̎Q�Ƃ�����)
-
-�ڍׂ� Executer.cs �̃C���X�^���X�ϐ����Q�ƁB�Q����
-
-## ���㏈���R���|�[�l���g(Execution processer)
-�Ӗ��͖�茋�ʂ��L���[�C���O���A�����̒����R���|�[�l���g�Ƀf�B�X�p�b�`���邱�Ƃł���B
-
-�P��v���Z�X�ł�����R���|�[�l���g�����茋�ʂ��󂯎�邽�߁A���㏈���R���|�[�l���g���܂�1�v���Z�X�ł���B
-�}���`�R�ACPU����ʓI�ł���A���R���|�[�l���g����Ԃ̃{�g���l�b�N�ƂȂ�Ǝv���邱�Ƃ���A
-������t�R���|�[�l���g�A���R���|�[�l���g�A���㏈���R���|�[�l���g�͓���T�[�o�̃v���Z�X or �X���b�h�Ƃ��Ď�������̂��ł��I�[�o�[�w�b�h���������ƍl������B
-
-���㏈���R���|�[�l���g�̂�����̐Ӗ��́A�e��N���C�A���g�ɒ񋟂��邽�߂̎Q�Ɨp�̔����\�z���邱�Ƃł���B
-���R���|�[�l���g�ɂ����Ă������I�ɔ����\�z���Ă��邽�ߓ�d�ɔ��̍\�z���s�����ƂɂȂ邪�A
-���R���|�[�l���g�͖�菈�����W�����������ƁA�����Ɩ�茋�ʂ�����̍\�z�͘_���I�ɉ\�ł���A�����̓˂����킹(��蔻��)���s��Ȃ��������ɍ\�z�ł��邱�Ƃ���A���㏈���R���|�[�l���g���Q�Ɨp�̔����\�z����Ӗ������B
-
-(���������R���|�[�l���g�Ɩ��㏈���R���|�[�l���g�͓���T�[�o��ɑ��݂��邽�߁A���L�������Q�Ƃł悢��������Ȃ��B�����Ă������ƂŁA��菈���ɓ����������̓����\���ƎQ�Ɨp�̏��񋟂ɓ������������\�������ꂼ��̗p�ł���A�Ƃ������_���l������)
+注文においてはProducer-Consumer パターンの Consumer に該当し、約定結果においてはProducer-Consumer パターンの Producer に該当する。
+順番を保証するため、1プロセスである必要がある。
 
 
-## �����R���|�[�l���g(Signer)
-�Ӗ��͖�肵����������� readable �Ȍ`�ł̉i�����A���ۂ̃u���b�N�`�F�[���ւ̏������݂� Frontend �ɖ�茋�ʂ�ʒm���邱�Ƃł���B
+### 板情報のオブジェクトモデル
+二つの平衡二分探索木で売り板情報と買い板情報のそれぞれを保持する。
+平衡二分探索木の key は価格である。
+(注文データ構造に記述したように)売り価格は正の数、買い価格は負の数とし、key の昇順で順序付けすることで、売り板の平衡二分探索木では先頭要素が最安値の売り注文、買い板では先頭要素が最高値の買い注文となる。
+(もちろん使用する平衡二分探索木ライブラリによっては、両方とも正の値で保持しておき買い板は降順、売り板は昇順としても問題はない)
 
-�܂� IFD �����ȂǏ��������̏ꍇ�͌㑱�̒����𒍕���t�R���|�[�l���g�ɔ�������B
-�����̏����͏����Ώۂ̖�茋�ʂɌ��肳��Ă���(���̖�茋�ʂɈˑ������������ł���)���߁A���̃R���|�[�l���g�̓X�P�[���A�E�g���\�ł���B
+平衡二分探索木の value に格納するのは板価格(BoardPrice)オブジェクトである。
+板価格オブジェクトは、その価格の注文を時系列に LinkedList で表現した注文(Order)オブジェクトへの参照を持つ。
 
+また注文のキャンセルの際に対応するオブジェクトを効率的に探すため、 key を OrderId、value を 注文オブジェクトとする全注文 Dictionary を保持している。
+キャンセルする注文を板から削除後に残りの注文の順序を保つため、注文オブジェクトは双方向リストとする(同価格で時系列的に一つ前の注文オブジェクトおよび一つ後の注文オブジェクトの参照を持つ)
 
-# �����_�ł̎���
-��菈���̃p�t�H�[�}���X�v����ړI�Ƃ��Ă��邽�߁A�O�q�A�[�L�e�N�`����{�݌v�ɂ�����u������t�R���|�[�l���g�E���R���|�[�l���g�E���㏈���R���|�[�l���g�v�ɊY������@�\���X���b�h�ɂĎ��������B
+詳細は Executer.cs のインスタンス変数を参照。
 
-http �ɂ��ڋq������t�AgRPC �ɂ��ʐM�A�����R���|�[�l���g�ɂ�����i��������������̔��s�A�u���b�N�`�F�[���ւ̏������݂Ȃǂ͎������Ă��Ȃ��B
+## 約定後処理コンポーネント(Execution processer)
+責務は約定結果をキューイングし、複数の締結コンポーネントにディスパッチすることである。
 
-���S�ƂȂ���R���|�[�l���g�ɂ����ẮA�v���_�N�V�������x���̃R�����g�̋L�q��@�\�P�̃��x���̃��j�b�g�e�X�g�R�[�h���쐬�����B
-�i���������ۂɃv���_�N�V�����ɏ悹��ꍇ�́A����ɍׂ������\�b�h�P�ʂ̃J�o���b�W�𖞂����e�X�g�̒ǉ����K�v�ƍl���Ă���j
+単一プロセスである約定コンポーネントから約定結果を受け取るため、約定後処理コンポーネントもまた1プロセスである。
+マルチコアCPUが一般的であり、約定コンポーネントが一番のボトルネックとなると思われることから、
+注文受付コンポーネント、約定コンポーネント、約定後処理コンポーネントは同一サーバのプロセス or スレッドとして実現するのが最もオーバーヘッドが小さいと考えられる。
 
+約定後処理コンポーネントのもう一つの責務は、各種クライアントに提供するための参照用の板情報を構築することである。
+約定コンポーネントにおいても内部的に板情報を構築しているため二重に板情報の構築を行うことになるが、
+約定コンポーネントは約定処理を集中したいこと、注文と約定結果から板情報の構築は論理的に可能であり、注文の突き合わせ(約定判定)を行わない分高速に構築できることから、約定後処理コンポーネントが参照用の板情報を構築する責務を持つ。
 
-
-# �ڋq�����̕���
-���Ƃ��� IFD �����ł͖��R���|�[�l���g����菈�����s���K�v������͍̂ŏ��̒����݂̂ł���A���ꂪ��肵����Ɍ㑱��������R���|�[�l���g�ɓ��͂���K�v������B
-���̂��� IFD �������ǂ����͌ڋq������t�R���|�[�l���g����ђ����R���|�[�l���g�݂̂��m���Ă���΂悭�A������t�R���|�[�l���g�ɂ� IFD �������ǂ����̏���n���K�v���Ȃ��B
-
-���̈���� OCO �����ɂ��ẮA�Е��̒�������肵���ۂɂ͂�������̒����̓A�g�~�b�N�ɃL�����Z������K�v�����邽�߁AOCO �������ǂ�������R���|�[�l���g�ɓn���K�v������B
-(�A�g�~�b�N�ȃL�����Z���͎�����͕s�v��������Ȃ����A�_���I�ɂ͕K�v�ł���)
-
-���l�� IOC ��������� FOK �����ɂ��Ă��A���R���|�[�l���g�ŏ�������K�v������B
-
-�g���K�[�����ɂ��ẮA�����R���|�[�l���g�ōŐV�̖�艿�i���`�F�b�N���A���̌��ʂɉ����Ē����𓊓�����΂悢���߁A���R���|�[�l���g�ɂ͕s�v�ȏ��ł���B
-�����𑍍��I�ɂ܂Ƃ߂āA���R���|�[�l���g�ŏ�������K�v�����鍀�ڂ��󂯕t������悤�ɁA������t�R���|�[�l���g�ɂ����钍���C���^�[�t�F�[�X��݌v�����B
+(ただし約定コンポーネントと約定後処理コンポーネントは同一サーバ上に存在するため、共有メモリ参照でよいかもしれない。逆に分けておくことで、約定処理に特化した板情報の内部表現と参照用の情報提供に特価した内部表現をそれぞれ採用することができる、という利点も考えられる)
 
 
-# ��Q�������̃f�[�^��ѐ�
-��A�̏����̒��� Frontend �Ɋm�肵������Ԃ��Ă���̂́A�ڋq������t�R���|�[�l���g�ɂ�����u�ڋq�����̎󗝁v����ђ����R���|�[�l���g�ɂ�����u��茋�ʂ̒ʒm�v�ł���B
+## 締結コンポーネント(Signer)
+責務は約定した注文をより readable な形での永続化、実際のブロックチェーンへの書き込みや Frontend に約定結果を通知することである。
 
-��Q���������ăV�X�e������~������̕��������ł́A���̓�̏���˂����킹�邱�ƂŁA�ǂ̌ڋq���������菈�����ĊJ����K�v�����邩�������ɎZ�o�ł���B
-
-���̂��߂����̏��͔����Ɠ����Ƀ��M���O�ȂǂœK�؂ɕۑ����A����Q���������Ă������ł���悤�ɂ��Ă����K�v������B
-�t�Ɍ����΁A����ȊO�̏��̓�������Ɏ����������Ă���肪�Ȃ��B
+また IFD 注文など条件注文の場合に後続の注文を注文受付コンポーネントに発注する。
+これらの処理は処理対象の約定結果に限定されている(他の約定結果に依存せず処理ができる)ため、このコンポーネントはスケールアウトが可能である。
 
 
-# ����̉��P
-## �p�t�H�[�}���X�����
-* ��茋�ʂ̌Œ蒷�o�C�g�z�񃁃b�Z�[�W�� (�I�u�W�F�N�g�����̃I�[�o�[�w�b�h�����炷)
-* �L���[�̉~�o�b�t�@�� (�����������s�v�ɂȂ�A���������������オ�����߂�)
-* �ɏ悹�钍���̉��i+�����ɂ�鏇���t��Set�� (�f�[�^�\�����ȑf�ɂȂ邽�ߑ��x���オ�����߂�)
+# 現時点での実装
+約定処理のパフォーマンス計測を目的としているため、前述アーキテクチャ基本設計における「注文受付コンポーネント・約定コンポーネント・約定後処理コンポーネント」に該当する機能をスレッドにて実装した。
+約定処理は OCO, IOC, FOK 注文も対応している。
 
-## �M���������
-* BoardPrice �� Order �̓I�u�W�F�N�g�����R�X�g��}���邽�߃������v�[����p���������ɂ��Ă��邪�A�C���ɑ΂��� fragile ��������Ȃ��B�ʏ��Object new/destory �̕����悢�\��������
+http による顧客注文受付、gRPC による通信、締結コンポーネントにおける永続化や条件注文の発行、ブロックチェーンへの書き込みなどは実装していない。
 
-### ���p�t�H�[�}���X�����ڎw���ꍇ�̃A�C�f�A
-���R���|�[�l���g���V���O���X���b�h�ƂȂ��Ă���_���{�g���l�b�N�ł���A�������X�P�[���A�E�g�ł���悤�Ȑ݌v���K�v�ƂȂ�B
-���̂��߂ɂ͑������A���S���Y���ɂ���Đ��x��ۏ؂���悤�Ȑ݌v���l�����邪�A�\���Ȋ��S���̊m�ۂȂǂ̌��؂��܂߂ē�Փx�������B
-���ɂ�������x���m�����]���ɂ��Ĉ��ȉ��̋K�͂̒����́i�������m�̖��ł͂Ȃ��j������̎����v�[���Ɩ�肷��Ƃ����������������ł���B
+中心となる約定コンポーネントにおいては、プロダクションレベルのコメントの記述や機能単体レベルのユニットテストコードも作成した。
+（ただし実際にプロダクションに乗せる場合は、さらに細かいメソッド単位のカバレッジを満たすテストの追加が必要と考えている）
+
+
+
+# 顧客注文の分析
+たとえば IFD 注文では約定コンポーネントが約定処理を行う必要があるのは最初の注文のみであり、それが約定した後に後続注文を約定コンポーネントに入力する必要がある。
+そのため IFD 注文かどうかは顧客注文受付コンポーネントおよび締結コンポーネントのみが知っていればよく、注文受付コンポーネントには IFD 注文かどうかの情報を渡す必要がない。
+
+その一方で OCO 注文については、片方の注文が約定した際にはもう一方の注文はアトミックにキャンセルする必要があるため、OCO 注文かどうかを約定コンポーネントに渡す必要がある。
+(アトミックなキャンセルは事実上は不要かもしれないが、論理的には必要である)
+
+同様に IOC 注文および FOK 注文についても、約定コンポーネントで処理する必要がある。
+
+トリガー注文については、締結コンポーネントで最新の約定価格をチェックし、その結果に応じて注文を投入すればよいため、約定コンポーネントには不要な情報である。
+
+これらを総合的にまとめて、約定コンポーネントで処理する必要がある項目を受け付けられるように、注文受付コンポーネントにおける注文インターフェースを設計した。
+
+
+# 障害発生時のデータ一貫性
+一連の処理の中で Frontend に確定した情報を返しているのは、顧客注文受付コンポーネントにおける「顧客注文の受理」および締結コンポーネントにおける「約定結果の通知」である。
+
+障害が発生してシステムが停止した後の復旧処理では、この二つの情報を突き合わせることで、どの顧客注文から約定処理を再開する必要があるかを厳密に算出できる。
+
+そのためこれらの情報は発生と同時にロギングなどで適切に保存し、いつ障害が発生しても復元できるようにしておく必要がある。
+逆に言えば、これ以外の情報はメモリ上に持ち揮発しても問題がない。
+
+
+# 今後の改善
+## パフォーマンス向上案
+* 約定結果の固定長バイト配列メッセージ化 (オブジェクト生成のオーバーヘッドを減らす)
+* キューの円環バッファ化 (同期処理が不要になり、メモリ効率も向上が見込める)
+* 約定コンポーネントの板情報を、平衡二分探索木 + LinkedList から注文の価格 + 時刻をキーとする平衡二分探索木のみに変更 (データ構造が簡素になるため速度向上が見込める)
+
+## 信頼性向上案
+* BoardPrice や Order はオブジェクト生成コストを抑えるためメモリプールを用いた実装にしているが、修正に対して fragile かもしれない。通常のObject new/destory の方がよい可能性がある
+
+### よりパフォーマンス向上を目指す場合のアイデア
+約定コンポーネントがシングルスレッドとなっている点がボトルネックであり、ここをスケールアウトできるような設計が必要となる。
+そのためには多数決アルゴリズムによって精度を保証するような設計が考えられるが、十分な完全性の確保などの検証も含めて難易度が高い。
+他にもある程度正確性を犠牲にして一定以下の規模の注文は（注文同士の約定ではなく）取引所の資金プールと約定するといった方式も検討できる。
